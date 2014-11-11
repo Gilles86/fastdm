@@ -3,26 +3,50 @@ import os
 import logging
 import glob
 import pandas
+from collections import OrderedDict
+import multiprocessing as mp
+
+def run_fast_dm(config_file):
+    print "Running fast-dm on %s" % config_file
+    p = subprocess.Popen(["fast-dm", config_file], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1)
+    #p = subprocess.Popen(["fast-dm", self._gen_fn('config', sid)], )
+
+    results = p.communicate()
+
+    return True
+
 
 class FastDM:
     
-    parameters = None
+    parameters = ['a', 'v', 't0', 'szr', 'sv', 'st0']
     
     def __init__(self, 
                  dataframe, 
                  zr=0.5, 
-                 data_file='data_%s.csv', 
-                 config_file='experiment.ctl',
-                 parameter_file='parameter.lst',
+                 data_file_template='data_%s.csv', 
+                 config_file_template='experiment_%s.ctl',
+                 parameter_file_template='parameter_%s.lst',
                  depends_on={},
                  verbose=logging.INFO):
         
-        
-        self.data_file_template = data_file
-        self.config_file = config_file
-        self.parameter_file = parameter_file
+        exp_factors = list(set([item for sublist in depends_on.values() for item in sublist]))
+
+        # Check if all subjects have all conditions
+        #for i, (sid, d) in enumerate(dataframe.groupby(['subj_idx',], as_index=False)):
+            ## Everyone should have exactly the same conditions
+            ## as the first subject
+            #if i == 0:
+                #norm = d.groupby(exp_factors).groups.keys()
+            #elif norm != d.groupby(exp_factors).groups.keys():
+                #print norm, d.groupby(exp_factors).groups.keys()
+                #raise Exception("In current implementation all conditions should occur in all subjects!")
+
+
+        self.data_file_template = data_file_template
+        self.config_file_template = config_file_template
+        self.parameter_file_template = parameter_file_template
         self.zr = zr
-        self.depends_on = depends_on
+        self.depends_on = OrderedDict(depends_on)
 
         self.dataframe = dataframe
         
@@ -52,18 +76,12 @@ class FastDM:
         
         fields += self.unique_fields
 
-        # Remove current datafiles
-        current_data_files = glob.glob(self._gen_data_fn())
-        for fn in current_data_files:
+        current_data_files = glob.glob(self._gen_fn())
+        current_config_files = glob.glob(self._gen_fn(file='config'))
+
+        for fn in current_data_files + current_config_files:
             os.remove(fn)
-        
-        # Create new datafiles
-        self.data_files = []
-        for sid, d in self.dataframe.groupby('subj_idx'):
-            fn = self._gen_data_fn(sid)
-            d[fields].to_csv(fn, sep='\t', header=None, index=None)
-            self.data_files.append(fn)
-        
+
         # Set up config file
         config_template =  "method ks\n" + \
                             "precision 3\n" + \
@@ -72,49 +90,120 @@ class FastDM:
         for key, value in self.depends_on.items():
             config_template += 'depends %s %s\n' % (key, " ".join(value))
             
-        config_template +=  "format TIME RESPONSE %s\n" % (" ".join(self.unique_fields)) + \
-                            "load %s\n" % self._gen_data_fn() + \
-                            "log %s \n" % self.parameter_file
-        
-        
-        print config_template
-        
-        f = open(self.config_file, 'w')
-        f.write(config_template)
-        f.close()
-        
-        
-    def fit(self):
-        if os.path.exists(self.parameter_file):
-            os.remove(self.parameter_file)
+        config_template +=  "format TIME RESPONSE %s\n" % (" ".join(self.unique_fields))
 
-        p = subprocess.Popen(["fast-dm", self.config_file], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1)
+        for sid, d in self.dataframe.groupby('subj_idx'):
+
+            d[fields].to_csv(self._gen_fn('data', sid), sep='\t', header=None, index=None)
+
+            current_config = config_template
+            current_config += "load %s\n" % self._gen_fn('data', sid) + \
+                              "log %s \n" % self._gen_fn('parameter', sid)
         
-        while True:
-            line = p.stdout.readline()
-            if not line: break
-            self.logger.info(line.rstrip())
-            
+        
+            f = open(self._gen_fn('config', sid), 'w')
+            f.write(current_config)
+            f.close()
+        
+        
+    def fit(self, nproc=4):
+        # Remove current datafiles
+        current_parameter_files = glob.glob(self._gen_fn(file='parameter'))
+
+        for fn in current_parameter_files:
+            os.remove(fn)
+        
+        pool = mp.Pool(nproc) 
+
+        fns = [self._gen_fn('config', sid) for sid in self.dataframe.subj_idx.unique()]
+        pool.map(run_fast_dm, fns) 
         self.fitted = True
 
+        return pool
 
-    def _gen_data_fn(self, sid=None):
+
+    def _gen_fn(self, file='data', sid=None):
+        
+        if file == 'data':
+            template = self.data_file_template
+        elif file == 'config':
+            template = self.config_file_template
+        elif file == 'parameter':
+            template = self.parameter_file_template
+
         if sid:
-            return self.data_file_template % sid
+            return  template % sid
         else:
-            return self.data_file_template % '*'
+            return template % '*'
         
         
     def get_parameters(self):
         if not self.fitted:
             self.fit()
 
-        parameters = pandas.read_csv(self.parameter_file, sep=' +')
+        parameter_files = [self._gen_fn('parameter', sid) for sid in self.dataframe.subj_idx.unique()]
+        return FastDMResult.from_parameter_files(parameter_files,
+                                                self.dataframe,
+                                                self.depends_on)
+        
+        
+class FastDMResult:
+
+
+    def __init__(self,
+                 parameters, 
+                 dataframe,
+                 depends_on={}):
+        self.parameters = parameters
+        self.dataframe = dataframe
+        self.depends_on = depends_on
+
+    @classmethod
+    def from_parameter_files(self,
+                             parameter_files,
+                             dataframe,
+                             depends_on={}):
+       
+        parameters = pandas.DataFrame()
+
+        for fn in parameter_files:
+            tmp = pandas.read_csv(fn, sep=' +')
+            parameters = pandas.concat((parameters, 
+                                        tmp),
+                                       ignore_index=True)
+
+        parameters['dataset'] = parameters.dataset.map(lambda d: d.split('_')[-1].split('.')[0])
         parameters.rename(columns={'dataset': 'subj_idx'}, inplace=True)
-            
-        return parameters
+
+
+        for column in parameters.columns:
+            if column.split('_')[0] in FastDM.parameters:
+                parameters[column] = parameters[column].astype(float)
+
+        return FastDMResult(parameters, dataframe, depends_on)
+
+    def melted_parameters(self, parameter):
         
-        
-                
-        
+
+        if parameter in self.depends_on.keys():
+            conditions = self.depends_on[parameter]
+
+        columns = [c for c in self.parameters.columns if c.split('_')[0] == parameter]
+
+        melted_pars =  pandas.melt(self.parameters,
+                           id_vars='subj_idx',
+                           value_vars=columns,
+                           value_name=parameter)
+    
+        for i, cond in enumerate(conditions):
+            melted_pars[cond] = melted_pars.variable.map(lambda x: x.split('_')[i+1])
+
+        melted_pars = melted_pars[~melted_pars[parameter].isnull()]
+
+        melted_pars.drop('variable', 1, inplace=True)
+
+        return melted_pars
+
+
+
 
