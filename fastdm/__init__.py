@@ -31,17 +31,6 @@ class FastDM:
         
         exp_factors = list(set([item for sublist in depends_on.values() for item in sublist]))
 
-        # Check if all subjects have all conditions
-        #for i, (sid, d) in enumerate(dataframe.groupby(['subj_idx',], as_index=False)):
-            ## Everyone should have exactly the same conditions
-            ## as the first subject
-            #if i == 0:
-                #norm = d.groupby(exp_factors).groups.keys()
-            #elif norm != d.groupby(exp_factors).groups.keys():
-                #print norm, d.groupby(exp_factors).groups.keys()
-                #raise Exception("In current implementation all conditions should occur in all subjects!")
-
-
         self.data_file_template = data_file_template
         self.config_file_template = config_file_template
         self.parameter_file_template = parameter_file_template
@@ -119,8 +108,6 @@ class FastDM:
         pool.map(run_fast_dm, fns) 
         self.fitted = True
 
-        return pool
-
 
     def _gen_fn(self, file='data', sid=None):
         
@@ -180,7 +167,12 @@ class FastDMResult:
             if column.split('_')[0] in FastDM.parameters:
                 parameters[column] = parameters[column].astype(float)
 
+        parameters = parameters.set_index('subj_idx')
+        parameters.index.name = 'subj_idx' 
+        parameters['subj_idx'] = parameters.index
+
         return FastDMResult(parameters, dataframe, depends_on)
+
 
     def melted_parameters(self, parameter):
         
