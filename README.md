@@ -7,6 +7,9 @@ This is a simple Python wrapper around the
 You can install this package like any other.
 
 simplest way is
+	pip install fastdm
+
+Or if you want to install the bleeding-edge development version:
 
 	pip install git+git://github.com/Gilles86/fastdm.git#egg=fastdm
 

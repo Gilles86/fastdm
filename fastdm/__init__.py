@@ -26,6 +26,7 @@ class FastDM:
                  data_file_template='data_%s.csv', 
                  config_file_template='experiment_%s.ctl',
                  parameter_file_template='parameter_%s.lst',
+                 method='ks',
                  depends_on={},
                  verbose=logging.INFO):
         
@@ -36,6 +37,7 @@ class FastDM:
         self.parameter_file_template = parameter_file_template
         self.zr = zr
         self.depends_on = OrderedDict(depends_on)
+        self.method = method
 
         self.dataframe = dataframe
         
@@ -72,7 +74,7 @@ class FastDM:
             os.remove(fn)
 
         # Set up config file
-        config_template =  "method ks\n" + \
+        config_template =  "method %s\n" % self.method + \
                             "precision 3\n" + \
                             "set zr %s\n" % self.zr
                             
