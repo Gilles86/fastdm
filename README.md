@@ -12,7 +12,7 @@ simplest way is
 
 
 # Examples
-Here you find a notebook showing how to use the wrapper.
+[Here](http://nbviewer.ipython.org/github/Gilles86/fastdm/blob/master/notebooks/test_fastdm_interface.ipynb) you find an IPython notebook showing how to use the wrapper.
 
 # Dependencies
  * [fast-dm](http://www.psychologie.uni-heidelberg.de/ae/meth/fast-dm/)
